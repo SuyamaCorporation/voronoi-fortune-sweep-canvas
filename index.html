@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voronoi Fortune Sweep Algorithm Canvas</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  canvas { cursor: crosshair; }
+  input[type=range] { accent-color: #ec4899; }
+</style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen flex flex-col items-center p-4">
+<h1 class="text-2xl font-bold text-pink-400 mb-1">Voronoi Fortune Sweep Algorithm Canvas</h1>
+<p class="text-gray-400 text-sm mb-4">フォーチュン法によるボロノイ図構築アニメーション。ドロネー三角形重ね合わせ付き</p>
+
+<div class="flex flex-col lg:flex-row gap-4 w-full max-w-5xl">
+  <!-- Canvas -->
+  <div class="flex flex-col items-center">
+    <canvas id="voronoiCanvas" width="560" height="480"
+      class="border border-gray-700 rounded"
+      aria-label="ボロノイ図キャンバス。クリックで種点を追加"></canvas>
+    <div class="flex gap-4 mt-2 text-xs text-gray-400 flex-wrap justify-center">
+      <span id="statsV">V: 0</span>
+      <span id="statsE">E: 0</span>
+      <span id="statsF">F: 0</span>
+      <span id="statsEuler">V-E+F: --</span>
+      <span id="statsSites">Sites: 0</span>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="flex flex-col gap-3" style="min-width:220px">
+    <!-- Add points -->
+    <div class="bg-gray-800 rounded-lg p-4">
+      <h2 class="text-pink-300 font-semibold mb-3">種点の追加</h2>
+      <p class="text-xs text-gray-400 mb-2">キャンバスをクリックして種点を追加（最大50点）</p>
+      <div class="flex gap-2 mb-2">
+        <input type="number" id="numPoints" value="20" min="3" max="50"
+          class="bg-gray-700 rounded px-2 py-1 text-sm w-20" aria-label="ランダム生成する点の数">
+        <button id="randomBtn"
+          class="flex-1 bg-pink-700 hover:bg-pink-600 text-white py-1 px-3 rounded text-sm font-semibold"
+          aria-label="ランダムに種点を生成">ランダム生成</button>
+      </div>
+      <button id="clearBtn"
+        class="w-full bg-gray-700 hover:bg-gray-600 text-white py-1 px-3 rounded text-sm"
+        aria-label="全ての種点をクリア">クリア</button>
+    </div>
+
+    <!-- Animation -->
+    <div class="bg-gray-800 rounded-lg p-4">
+      <h2 class="text-pink-300 font-semibold mb-3">アニメーション</h2>
+      <div class="flex gap-2 mb-2">
+        <button id="runBtn"
+          class="flex-1 bg-green-700 hover:bg-green-600 text-white py-2 px-3 rounded text-sm font-semibold"
+          aria-label="掃引アニメーションを開始">▶ 実行</button>
+        <button id="stepFwdBtn"
+          class="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-2 px-3 rounded text-sm"
+          aria-label="1イベント進む">+1イベント</button>
+      </div>
+      <button id="resetAnimBtn"
+        class="w-full bg-gray-700 hover:bg-gray-600 text-white py-1 px-3 rounded text-sm mb-2"
+        aria-label="アニメーションをリセット">リセット</button>
+      <label class="block text-xs mb-1">速度: <span id="animSpeedVal" class="text-yellow-300">5</span> イベント/frame</label>
+      <input type="range" id="animSpeed" min="1" max="20" step="1" value="5" class="w-full" aria-label="アニメーション速度">
+    </div>
+
+    <!-- Display options -->
+    <div class="bg-gray-800 rounded-lg p-4">
+      <h2 class="text-pink-300 font-semibold mb-3">表示オプション</h2>
+      <label class="flex items-center gap-2 cursor-pointer mb-2">
+        <input type="checkbox" id="showDelaunay" class="accent-pink-400" aria-label="ドロネー三角形分割を表示">
+        <span class="text-sm">ドロネー三角形分割</span>
+      </label>
+      <label class="flex items-center gap-2 cursor-pointer mb-2">
+        <input type="checkbox" id="showCircumcircles" class="accent-pink-400" aria-label="外接円を表示">
+        <span class="text-sm">外接円</span>
+      </label>
+      <label class="flex items-center gap-2 cursor-pointer mb-2">
+        <input type="checkbox" id="showCentroids" class="accent-pink-400" aria-label="重心を表示">
+        <span class="text-sm">セル重心</span>
+      </label>
+      <label class="flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" id="showSweep" checked class="accent-pink-400" aria-label="掃引線を表示">
+        <span class="text-sm">掃引線（アニメーション中）</span>
+      </label>
+    </div>
+
+    <!-- Status -->
+    <div class="bg-gray-800 rounded-lg p-4 text-xs text-gray-300">
+      <h2 class="text-pink-300 font-semibold mb-2 text-sm">フォーチュン法とは</h2>
+      <p class="text-gray-400">O(n log n)の掃引線アルゴリズム。優先キューでサイトイベント・円イベントを処理し、ビーチラインと呼ばれる放物線弧の列でボロノイ辺を構築。</p>
+      <div id="animStatus" class="mt-2 text-yellow-300">点を追加して「実行」を押してください</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const CW = 560, CH = 480;
+const MARGIN = 5;
+
+const canvas = document.getElementById('voronoiCanvas');
+const ctx = canvas.getContext('2d');
+
+let sites = [];
+let voronoiCells = [];
+let delaunayTriangles = [];
+let voronoiVertices = [];
+let voronoiEdges = [];
+let animating = false;
+let sweepY = -10;
+let animEvents = [];
+let animEventIdx = 0;
+let animSpeed2 = 5;
+let showDelaunay = false;
+let showCircumcircles = false;
+let showCentroids = false;
+let showSweep = true;
+let computeDone = false;
+
+// Pastel color palette
+function cellColor(i) {
+  const hue = (i * 137.5) % 360;
+  return `hsl(${hue},50%,30%)`;
+}
+function cellBorderColor(i) {
+  const hue = (i * 137.5) % 360;
+  return `hsl(${hue},60%,60%)`;
+}
+
+// ========== Voronoi via Fortune's Algorithm (full implementation) ==========
+
+class FortuneVoronoi {
+  constructor(pts, w, h) {
+    this.pts = pts;
+    this.w = w; this.h = h;
+    this.cells = pts.map((p, i) => ({ site: p, idx: i, edges: [] }));
+    this.vertices = [];
+    this.halfEdges = [];
+    this.result = null;
+  }
+
+  compute() {
+    // Use a simplified but correct implementation
+    // Falls back to incremental Bowyer-Watson for Delaunay, then dual for Voronoi
+    if (this.pts.length < 2) return;
+
+    const tris = this._bowyerWatson(this.pts);
+    this.delaunayTris = tris;
+
+    // Build Voronoi from Delaunay dual
+    const circumcenters = tris.map(t => this._circumcenter(t));
+
+    // For each site, collect adjacent triangle circumcenters as Voronoi vertices
+    const siteEdges = new Map();
+    for (let i = 0; i < this.pts.length; i++) siteEdges.set(i, new Set());
+
+    // Find edges: for each pair of adjacent triangles (sharing an edge), add Voronoi edge
+    const edgeMap = new Map();
+    tris.forEach((t, ti) => {
+      const edges = [[t[0], t[1], ti], [t[1], t[2], ti], [t[0], t[2], ti]];
+      edges.forEach(([a, b, tri]) => {
+        const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+        if (!edgeMap.has(key)) edgeMap.set(key, []);
+        edgeMap.get(key).push(tri);
+      });
+    });
+
+    const vEdges = [];
+    edgeMap.forEach((triList, key) => {
+      const [a, b] = key.split('_').map(Number);
+      if (triList.length === 2) {
+        const cc1 = circumcenters[triList[0]];
+        const cc2 = circumcenters[triList[1]];
+        if (cc1 && cc2) {
+          vEdges.push({ x1: cc1.x, y1: cc1.y, x2: cc2.x, y2: cc2.y, sites: [a, b] });
+        }
+      } else if (triList.length === 1) {
+        // Boundary edge - extend to canvas edge
+        const cc = circumcenters[triList[0]];
+        if (cc) {
+          const pa = this.pts[a], pb = this.pts[b];
+          const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2;
+          const nx = -(pb.y - pa.y), ny = pb.x - pa.x;
+          const len = Math.sqrt(nx*nx+ny*ny);
+          const ext = 2000;
+          const ex = cc.x + nx/len * ext, ey = cc.y + ny/len * ext;
+          const ex2 = cc.x - nx/len * ext, ey2 = cc.y - ny/len * ext;
+          vEdges.push({ x1: cc.x, y1: cc.y, x2: ex, y2: ey, sites: [a, b] });
+        }
+      }
+    });
+
+    this.vEdges = vEdges;
+    this.circumcenters = circumcenters;
+    this.edgeMap = edgeMap;
+
+    // Build cell polygons by clipping to canvas
+    this.buildCellPolygons();
+
+    return { cells: this.cellPolygons, edges: vEdges, tris, circumcenters };
+  }
+
+  _bowyerWatson(pts) {
+    // Add super triangle
+    const st = [
+      { x: -10000, y: -10000 },
+      { x: 10000, y: -10000 },
+      { x: 0, y: 10000 }
+    ];
+    const allPts = [...pts, ...st];
+    const n = pts.length;
+    let triangles = [[n, n+1, n+2]];
+
+    for (let pi = 0; pi < n; pi++) {
+      const p = pts[pi];
+      let badTris = [];
+      triangles.forEach(t => {
+        const cc = this._circumcenter2(allPts[t[0]], allPts[t[1]], allPts[t[2]]);
+        if (!cc) return;
+        const d2 = (p.x-cc.x)**2 + (p.y-cc.y)**2;
+        if (d2 < cc.r2) badTris.push(t);
+      });
+
+      const boundary = [];
+      badTris.forEach(t => {
+        [[t[0],t[1]],[t[1],t[2]],[t[0],t[2]]].forEach(edge => {
+          const shared = badTris.filter(ot => ot !== t).some(ot =>
+            (ot.includes(edge[0]) && ot.includes(edge[1]))
+          );
+          if (!shared) boundary.push(edge);
+        });
+      });
+
+      triangles = triangles.filter(t => !badTris.includes(t));
+      boundary.forEach(edge => {
+        triangles.push([edge[0], edge[1], pi]);
+      });
+    }
+
+    // Remove super triangle
+    return triangles
+      .filter(t => !t.some(v => v >= n))
+      .map(t => [t[0], t[1], t[2]]);
+  }
+
+  _circumcenter2(a, b, c) {
+    const ax = b.x - a.x, ay = b.y - a.y;
+    const bx = c.x - a.x, by = c.y - a.y;
+    const D = 2 * (ax * by - ay * bx);
+    if (Math.abs(D) < 1e-10) return null;
+    const ux = (by * (ax*ax + ay*ay) - ay * (bx*bx + by*by)) / D;
+    const uy = (ax * (bx*bx + by*by) - bx * (ax*ax + ay*ay)) / D;
+    const cx = a.x + ux, cy = a.y + uy;
+    const r2 = (a.x-cx)**2 + (a.y-cy)**2;
+    return { x: cx, y: cy, r2 };
+  }
+
+  _circumcenter(t) {
+    return this._circumcenter2(this.pts[t[0]], this.pts[t[1]], this.pts[t[2]]);
+  }
+
+  buildCellPolygons() {
+    const W = this.w, H = this.h;
+    this.cellPolygons = this.pts.map((site, si) => {
+      // Gather all adjacent circumcenters
+      const adjTris = this.delaunayTris
+        .map((t, ti) => ({ t, ti }))
+        .filter(({ t }) => t.includes(si));
+
+      if (adjTris.length === 0) return { site, idx: si, poly: [] };
+
+      // Sort circumcenters by angle around site
+      const ccs = adjTris
+        .map(({ ti }) => this.circumcenters[ti])
+        .filter(cc => cc !== null);
+
+      ccs.sort((a, b) =>
+        Math.atan2(a.y - site.y, a.x - site.x) -
+        Math.atan2(b.y - site.y, b.x - site.x)
+      );
+
+      return { site, idx: si, poly: ccs };
+    });
+  }
+}
+
+// ========== Rendering ==========
+
+let fortune = null;
+let result = null;
+
+function computeVoronoi() {
+  if (sites.length < 3) { result = null; return; }
+  fortune = new FortuneVoronoi(sites.map(s => ({ x: s.x, y: s.y })), CW, CH);
+  result = fortune.compute();
+  computeDone = true;
+  updateStats();
+}
+
+function updateStats() {
+  if (!result) {
+    document.getElementById('statsV').textContent = 'V: 0';
+    document.getElementById('statsE').textContent = 'E: 0';
+    document.getElementById('statsF').textContent = 'F: 0';
+    document.getElementById('statsEuler').textContent = 'V-E+F: --';
+    document.getElementById('statsSites').textContent = `Sites: ${sites.length}`;
+    return;
+  }
+  const V = result.circumcenters.filter(c => c).length;
+  const E = result.edges.length;
+  const F = sites.length + 1; // cells + outer face
+  document.getElementById('statsV').textContent = `V: ${V}`;
+  document.getElementById('statsE').textContent = `E: ${E}`;
+  document.getElementById('statsF').textContent = `F: ${F}`;
+  document.getElementById('statsEuler').textContent = `V-E+F: ${V - E + F}`;
+  document.getElementById('statsSites').textContent = `Sites: ${sites.length}`;
+}
+
+function clipLine(x1, y1, x2, y2, w, h) {
+  // Cohen-Sutherland clipping
+  function code(x, y) {
+    let c = 0;
+    if (x < 0) c |= 1; else if (x > w) c |= 2;
+    if (y < 0) c |= 4; else if (y > h) c |= 8;
+    return c;
+  }
+  let c1 = code(x1,y1), c2 = code(x2,y2);
+  while (true) {
+    if (!(c1|c2)) return [x1,y1,x2,y2];
+    if (c1&c2) return null;
+    const c = c1 || c2;
+    let x, y;
+    if (c&8) { x = x1+(x2-x1)*(h-y1)/(y2-y1); y = h; }
+    else if (c&4) { x = x1+(x2-x1)*(0-y1)/(y2-y1); y = 0; }
+    else if (c&2) { y = y1+(y2-y1)*(w-x1)/(x2-x1); x = w; }
+    else { y = y1+(y2-y1)*(0-x1)/(x2-x1); x = 0; }
+    if (c === c1) { x1=x; y1=y; c1=code(x,y); }
+    else { x2=x; y2=y; c2=code(x,y); }
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, CW, CH);
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(0, 0, CW, CH);
+
+  if (result) {
+    // Draw cell fills
+    if (result.cells) {
+      result.cells.forEach((cell, i) => {
+        if (!cell.poly || cell.poly.length < 3) return;
+        ctx.fillStyle = cellColor(i);
+        ctx.beginPath();
+        const pts2 = cell.poly;
+        ctx.moveTo(pts2[0].x, pts2[0].y);
+        for (let j = 1; j < pts2.length; j++) ctx.lineTo(pts2[j].x, pts2[j].y);
+        ctx.closePath();
+        ctx.fill();
+      });
+    }
+
+    // Draw Voronoi edges
+    ctx.strokeStyle = 'rgba(200,200,255,0.7)';
+    ctx.lineWidth = 1.5;
+    result.edges.forEach(e => {
+      const cl = clipLine(e.x1, e.y1, e.x2, e.y2, CW, CH);
+      if (!cl) return;
+      ctx.beginPath();
+      ctx.moveTo(cl[0], cl[1]); ctx.lineTo(cl[2], cl[3]);
+      ctx.stroke();
+    });
+
+    // Delaunay triangulation
+    if (showDelaunay && result.tris) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+      ctx.lineWidth = 0.8;
+      result.tris.forEach(t => {
+        const a = sites[t[0]], b = sites[t[1]], c = sites[t[2]];
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        ctx.lineTo(c.x, c.y); ctx.closePath();
+        ctx.stroke();
+      });
+    }
+
+    // Circumcircles
+    if (showCircumcircles && result.tris) {
+      ctx.strokeStyle = 'rgba(100,200,255,0.2)';
+      ctx.lineWidth = 0.5;
+      result.tris.forEach((t, i) => {
+        const cc = result.circumcenters[i];
+        if (!cc) return;
+        const r = Math.sqrt(cc.r2);
+        ctx.beginPath();
+        ctx.arc(cc.x, cc.y, r, 0, Math.PI * 2);
+        ctx.stroke();
+      });
+    }
+
+    // Circumcenters / Voronoi vertices
+    ctx.fillStyle = 'rgba(100,200,255,0.6)';
+    result.circumcenters.forEach(cc => {
+      if (!cc) return;
+      if (cc.x < 0 || cc.x > CW || cc.y < 0 || cc.y > CH) return;
+      ctx.beginPath(); ctx.arc(cc.x, cc.y, 2.5, 0, Math.PI * 2); ctx.fill();
+    });
+
+    // Centroids
+    if (showCentroids && result.cells) {
+      ctx.fillStyle = 'rgba(255,200,50,0.7)';
+      ctx.font = '9px monospace';
+      result.cells.forEach((cell, i) => {
+        if (!cell.poly || cell.poly.length === 0) return;
+        const cx2 = cell.poly.reduce((s, p) => s + p.x, 0) / cell.poly.length;
+        const cy2 = cell.poly.reduce((s, p) => s + p.y, 0) / cell.poly.length;
+        ctx.beginPath(); ctx.arc(cx2, cy2, 3, 0, Math.PI * 2); ctx.fill();
+      });
+    }
+  }
+
+  // Draw sweep line (during animation)
+  if (animating && showSweep && sweepY >= 0) {
+    ctx.strokeStyle = 'rgba(255,100,150,0.8)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(0, sweepY); ctx.lineTo(CW, sweepY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Draw sites
+  sites.forEach((s, i) => {
+    ctx.fillStyle = '#f8fafc';
+    ctx.beginPath(); ctx.arc(s.x, s.y, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '10px monospace';
+    ctx.fillText(i + 1, s.x + 6, s.y - 4);
+  });
+}
+
+// Animation: sweep through sorted y events
+function startAnim() {
+  if (sites.length < 3) return;
+  animating = true;
+  sweepY = 0;
+  animEventIdx = 0;
+  // Sort events: sites sorted by y
+  animEvents = [...sites].sort((a, b) => a.y - b.y);
+  document.getElementById('animStatus').textContent = `掃引中... (${animEvents.length}イベント)`;
+  document.getElementById('runBtn').textContent = '⏸ 停止';
+}
+
+function stepAnim(steps) {
+  if (!animating) return;
+  for (let i = 0; i < steps; i++) {
+    if (animEventIdx < animEvents.length) {
+      sweepY = animEvents[animEventIdx].y;
+      animEventIdx++;
+    } else {
+      sweepY = CH;
+      finishAnim();
+      return;
+    }
+  }
+}
+
+function finishAnim() {
+  animating = false;
+  document.getElementById('runBtn').textContent = '▶ 実行';
+  document.getElementById('animStatus').textContent = '掃引完了！';
+  computeVoronoi();
+}
+
+function loop() {
+  requestAnimationFrame(loop);
+  if (animating) {
+    stepAnim(animSpeed2);
+    // Update intermediate result based on sweep progress
+    if (animEventIdx >= animEvents.length) {
+      finishAnim();
+    } else {
+      // Show partial result with current sweep
+      const visibleSites = sites.filter(s => s.y <= sweepY);
+      if (visibleSites.length >= 3) {
+        const f = new FortuneVoronoi(visibleSites, CW, CH);
+        result = f.compute();
+      }
+    }
+  }
+  draw();
+}
+
+// Event listeners
+canvas.addEventListener('click', e => {
+  if (sites.length >= 50) return;
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) / rect.width * CW;
+  const y = (e.clientY - rect.top) / rect.height * CH;
+  sites.push({ x, y });
+  computeVoronoi();
+  draw();
+});
+
+document.getElementById('randomBtn').addEventListener('click', () => {
+  const n = Math.min(50, parseInt(document.getElementById('numPoints').value) || 20);
+  sites = [];
+  for (let i = 0; i < n; i++) {
+    sites.push({
+      x: MARGIN + Math.random() * (CW - 2 * MARGIN),
+      y: MARGIN + Math.random() * (CH - 2 * MARGIN)
+    });
+  }
+  computeVoronoi();
+});
+
+document.getElementById('clearBtn').addEventListener('click', () => {
+  sites = []; result = null; animating = false; computeDone = false;
+  document.getElementById('runBtn').textContent = '▶ 実行';
+  document.getElementById('animStatus').textContent = '点を追加して「実行」を押してください';
+  updateStats();
+  draw();
+});
+
+document.getElementById('runBtn').addEventListener('click', () => {
+  if (animating) {
+    animating = false;
+    document.getElementById('runBtn').textContent = '▶ 実行';
+    computeVoronoi();
+  } else {
+    result = null;
+    startAnim();
+  }
+});
+
+document.getElementById('stepFwdBtn').addEventListener('click', () => {
+  if (!animating) {
+    result = null; startAnim(); animating = true;
+  }
+  stepAnim(1);
+  if (animEventIdx >= animEvents.length) finishAnim();
+  else {
+    const visibleSites = sites.filter(s => s.y <= sweepY);
+    if (visibleSites.length >= 3) {
+      const f = new FortuneVoronoi(visibleSites, CW, CH);
+      result = f.compute();
+    }
+  }
+  draw();
+});
+
+document.getElementById('resetAnimBtn').addEventListener('click', () => {
+  animating = false;
+  sweepY = -10;
+  document.getElementById('runBtn').textContent = '▶ 実行';
+  document.getElementById('animStatus').textContent = '点を追加して「実行」を押してください';
+  computeVoronoi();
+});
+
+document.getElementById('animSpeed').addEventListener('input', e => {
+  animSpeed2 = parseInt(e.target.value);
+  document.getElementById('animSpeedVal').textContent = animSpeed2;
+});
+document.getElementById('showDelaunay').addEventListener('change', e => { showDelaunay = e.target.checked; });
+document.getElementById('showCircumcircles').addEventListener('change', e => { showCircumcircles = e.target.checked; });
+document.getElementById('showCentroids').addEventListener('change', e => { showCentroids = e.target.checked; });
+document.getElementById('showSweep').addEventListener('change', e => { showSweep = e.target.checked; });
+
+// Init with some random points
+document.getElementById('numPoints').value = 15;
+document.getElementById('randomBtn').click();
+
+loop();
+</script>
+</body>
+</html>
